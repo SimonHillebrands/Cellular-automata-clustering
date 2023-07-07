@@ -13,6 +13,11 @@ import time
 import cv2
 import matplotlib.pyplot as plt
 import os
+import imageio
+from scipy.stats import entropy
+from scipy.spatial.distance import cdist
+
+
 
 class Rule:
     base_states = [i for i in range(0,9)]
@@ -26,12 +31,12 @@ class Rule:
     def gen_name(self):
         #name = ''.join([str(i) for i in self.death_rule]) + '-' + ''.join([str(i) for i in self.survival_rule]) + '-' + ''.join([str(i) for i in self.birth_rule])
         name = ''.join(map(str, self.death_rule)) + '-' + ''.join(map(str, self.survival_rule)) + '-' + ''.join(map(str, self.birth_rule))
-        print("name: ",name)
+       # print("name: ",name)
         return name
     def randomize(self):
-        self.death_rule =[i for i in range(0,9) if random.randint(0,10) == 0]
-        self.survival_rule =[i for i in range(0,9) if random.randint(0,10) == 0]
-        self.birth_rule =[i for i in range(0,9) if random.randint(0,10) == 0]
+        self.death_rule =[i for i in range(0,9) if random.randint(0,10)%4== 0]
+        self.survival_rule =[i for i in range(0,9) if random.randint(0,10)%4 == 0]
+        self.birth_rule =[i for i in range(0,9) if random.randint(0,10)%4 == 0]
 
         if(len(self.death_rule) == 0):
             self.death_rule = [random.randint(0,8)]
@@ -56,18 +61,12 @@ color_map = {
 
 class Grid:
     def __init__(self,rule):
-        self.grid = np.zeros((50,50))
+        self.grid = np.zeros((100,100))
         self.rule = rule
     def update(self):
         new_grid = np.zeros(self.grid.shape)
         for i in range(self.grid.shape[0]):
             for j in range(self.grid.shape[1]):
-
-                # neighborhood = []
-                # if(i<1 or j<1 or i>self.grid.shape[0]-2 or j>self.grid.shape[1]-2):
-
-                    
-
                 # Get the indices of the neighbors, wrapping around at the edges
                 i_prev = (i-1) % self.grid.shape[0]
                 i_next = (i+1) % self.grid.shape[0]
@@ -81,9 +80,6 @@ class Grid:
 
                 
                 neighborhood = neighborhood.reshape(3,3)
-                # else:
-                #     # Select the neighborhood
-                #     neighborhood = self.grid[i-1:i+1,j-1:j+1]
 
                 # Update the cell based on the neighborhood
                 new_grid[i,j] = self.generate(neighborhood,self.rule.states,self.rule.death_rule,self.rule.survival_rule,self.rule.birth_rule)
@@ -92,14 +88,14 @@ class Grid:
     def get_grid(self):
         return(self.grid)
     def clear_grid(self):
-      self.grid = np.zeros((50,50))
+      self.grid = np.zeros((100,100))
     def get_display(self):
         out =  np.zeros((self.grid.shape[0], self.grid.shape[1], 3), dtype=np.uint8)
         for i in range(1,self.grid.shape[0]-1):
             for j in range(1,self.grid.shape[1]-1):
               out[i][j] = self.rule.color_map[self.grid[i][j]]
         out = Image.fromarray(out)
-        # out = out.resize((300,300))
+        out = out.resize((400,400))
         return(out)
     def populate(self,population):
       for i in range(population):
@@ -137,11 +133,11 @@ class Grid:
 class Manager:
     def __init__(self,grid):
         self.grid = grid
-        self.grid.populate(500)
+        self.grid.populate(700)
     
     def regen(self):
         self.grid.clear_grid()
-        self.grid.populate(500)
+        self.grid.populate(700)
         self.grid.rule.randomize()
     def cluster(self,image):
         # Load the image
@@ -155,47 +151,72 @@ class Manager:
         num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(thresh, connectivity=8)
 
         # Sort the clusters by size (largest to smallest)
-        sizes = stats[:, -1]
-        sorted_idxs = np.argsort(sizes)[::-1]
-        sorted_labels = np.zeros_like(labels)
-        for i, idx in enumerate(sorted_idxs):
-            sorted_labels[labels == idx] = i + 1
+        # sizes = stats[:, -1]
+        # sorted_idxs = np.argsort(sizes)[::-1]
+        # sorted_labels = np.zeros_like(labels)
+        # for i, idx in enumerate(sorted_idxs):
+        #     sorted_labels[labels == idx] = i + 1
 
         # Apply a color map to the labeled image
-        num_labels = np.max(sorted_labels) + 1
-        colors = plt.cm.get_cmap('rainbow', num_labels)
-        colored_labels = colors(sorted_labels)[:, :, :3] * 255
-        colored_labels = colored_labels.astype(np.uint8)
+        # num_labels = np.max(sorted_labels) + 1
+        # colors = plt.cm.get_cmap('rainbow', num_labels)
+        # colored_labels = colors(sorted_labels)[:, :, :3] * 255
+        # colored_labels = colored_labels.astype(np.uint8)
 
-        colored_labels = cv2.resize(colored_labels, (0, 0), fx = 3, fy = 3)
+        # colored_labels = cv2.resize(colored_labels, (0, 0), fx = 3, fy = 3)
+        # out = Image.fromarray(colored_labels)
+        # out.save("cluster_test/"+str(time.time())+".png")
 
         #print(set(labels.flatten()))
+        area = []
+        new_centroids = []
+        for i in range(1,num_labels):
+            (cx, cy) = centroids[i]
+            area.append(stats[i][cv2.CC_STAT_AREA])
+            new_centroids.append(centroids[i])
+        # print(new_centroids)
+        # print(area)
 
-        return [centroids,len(set(labels.flatten()))-1]
+        return [new_centroids,len(set(labels.flatten()))-1,area]
     def calculate_fitness(self,generations):
         avg_displacement = []
         avg_clusters = []
-        prev_centroids, prev_clusters = self.cluster(self.grid.get_display())
+        avg_area = []
+        prev_centroids, prev_clusters, prev_area = self.cluster(self.grid.get_display())
+        for i in range(50):
+            self.grid.update()
+        generations-=50
         for i in range(generations):
             self.grid.update()
-            centroids, num_clusters = self.cluster(self.grid.get_display())
-            displacement = [np.linalg.norm(centroids[j] - prev_centroids[j]) for j in range(min(len(prev_centroids),len(centroids)))]
-            avg_displacement.append(np.mean(displacement))      
+            centroids, num_clusters,area = self.cluster(self.grid.get_display())
+            #print(num_clusters)
+            #displacement = [np.linalg.norm(centroids[j] - prev_centroids[j]) for j in range(min(len(prev_centroids),len(centroids)))]
+            #displacement = abs(centroids - prev_centroids)
+            #displacement = cdist(centroids, prev_centroids, 'cityblock')
+
+            #avg_displacement.append(np.mean(displacement))      
 
             avg_clusters.append(num_clusters)
+            avg_area.append(np.mean(area))
 
             prev_centroids = centroids
             prev_clusters = num_clusters
 
-            self.save_image(str(i))
+            #self.save_image(str(i))
         #print(centroids)
         #print(num_clusters)
-        displacement_std = np.std(avg_displacement)
-        displacement_mean = np.mean(avg_displacement)
+        # displacement_std = np.std(avg_displacement)
+        # displacement_mean = np.mean(avg_displacement)
         num_clusters_std = np.std(avg_clusters)
+        area_mean = np.mean(avg_area)
+        area_std = np.std(avg_area)
 
-
-        return [displacement_mean,displacement_std,num_clusters_std]
+        counts = np.bincount(self.grid.grid.flatten().astype(int))
+        probs = counts / float(generations)
+        entropy = - np.sum([p * np.log2(p) for p in probs if p > 0])
+        #entropy = np.sum(probs * np.log(probs/probs)) / np.log(2)
+        # entropy = scipy.stats.entropy(probs)
+        return [num_clusters_std,entropy,area_mean,area_std]
     def save_image(self,name):
         path = self.grid.rule.gen_name()
         isExist = os.path.exists(path)
@@ -205,14 +226,69 @@ class Manager:
             os.makedirs(path)
         self.grid.get_display().save(path +"/" + name + ".png")
 
-game_of_life = Rule([0,1], [1,4], [2,3],[3],color_map)
+import glob
+def make_gif(frame_folder,name):
+    frames = [Image.open(image) for image in glob.glob(f"{frame_folder}/*.JPG")]
+    frame_one = frames[0]
+    frame_one.save(name, format="GIF", append_images=frames,
+               save_all=True, duration=300, loop=0)
 
+
+#states/death/survial/birth
+game_of_life = Rule([0,1], [1,4], [2,3],[3],color_map)
+#new_rule = Rule([0,1],[3,5,7],[1,3,5,7,8],[1,2,3,4,5],color_map)
 test = Grid(game_of_life)
 
 manager = Manager(test)
+# for i in range(100):
+#     manager.calculate_fitness(100)
 
-for i in range(50):
-    print(manager.calculate_fitness(100))
-    manager.regen()
-    print(manager.grid.rule.gen_name())
+f = open("clusters2.txt", "r")
+lines = f.readlines()
+f.close()
 
+for line in lines:
+    feature = line.split(" : ") 
+    cluster = feature[0]
+    # if(cluster == "0" or cluster =="1" or cluster == "2" or cluster == "3" or cluster =="4"):
+    #     continue
+    rule_name = feature[1].replace("\n","")
+    feature = feature[1].replace("\n","").split("-")
+    death = [int(i) for i in feature[0]]
+    survival = [int(i) for i in feature[1]]
+    birth = [int(i) for i in feature[2]]
+
+    test = Grid(Rule([0,1],death,survival,birth,color_map))
+    test.populate(2000)
+
+
+    for i in range(200):
+        test.update()
+        if(i<10):
+            test.get_display().save("temp/test"+"00"+str(i)+".JPG")
+        elif(i<100):
+            test.get_display().save("temp/test"+"0"+str(i)+".JPG")
+        else:
+            test.get_display().save("temp/test"+str(i)+".JPG")
+    try:
+        make_gif("temp","gifs2/"+cluster+"_"+rule_name+".gif")
+    except Exception as e:
+        print(e)
+        print("error")
+        
+
+# start = time.time()
+# f = open("features_area2.txt", "a")
+# for i in range(5000):
+
+#     f.write(manager.grid.rule.gen_name())
+#     f.write(" : ")
+#     f.write(str(manager.calculate_fitness(150)))
+#     f.write("\n")
+
+#     manager.regen()
+#     if(i%50 == 0):  
+#         print(time.time()-start)
+#         start = time.time()
+#     #print(manager.grid.rule.gen_name())
+# f.close()
